@@ -41,8 +41,8 @@ MODEL = "claude-sonnet-4-5-20250929"
 # valuta: aktiens handelsvaluta. Stooq-symbol enligt stooq.com.
 # antal: antal aktier. inkop: totalt inköpsvärde i SEK.
 HOLDINGS = [
-    {"namn": "ServiceNow", "antal": 50,  "inkop_sek": 47800, "stooq": "now.us",     "valuta": "USD", "kort": "NOW"},
-    {"namn": "Fortum",     "antal": 100, "inkop_sek": 22032, "stooq": "fortum.fi",  "valuta": "EUR", "kort": "FORTUM"},
+    {"namn": "ServiceNow", "antal": 50,  "inkop_sek": 47800, "stooq": ["now.us"],                          "valuta": "USD", "kort": "NOW"},
+    {"namn": "Fortum",     "antal": 100, "inkop_sek": 22032, "stooq": ["fum1v.fi", "fortum.fi", "fortum.he"], "valuta": "EUR", "kort": "FORTUM"},
 ]
 
 
@@ -66,6 +66,15 @@ def stooq_last(symbol):
         return None
 
 
+def stooq_last_any(symbols):
+    """Provar flera kandidatsymboler, returnerar (pris, symbol_som_funkade) eller (None, None)."""
+    for sym in symbols:
+        p = stooq_last(sym)
+        if p is not None:
+            return p, sym
+    return None, None
+
+
 def fx_to_sek(cur):
     """Växelkurs cur->SEK via Stooq. SEK=1.0."""
     if cur == "SEK":
@@ -85,21 +94,22 @@ def compute_portfolio():
     ok = True
     for h in HOLDINGS:
         inkop_total += h["inkop_sek"]
-        price = stooq_last(h["stooq"])
+        symbols = h["stooq"] if isinstance(h["stooq"], list) else [h["stooq"]]
+        price, used = stooq_last_any(symbols)
         rate = fx_to_sek(h["valuta"])
         if price is None or rate is None:
-            print(f"  Saknar kurs/FX för {h['namn']} ({h['stooq']}, {h['valuta']})")
+            print(f"  Saknar kurs/FX för {h['namn']} (provade {symbols}, {h['valuta']})")
             ok = False
             continue
         värde = h["antal"] * price * rate
         total_sek += värde
         h_avk = (värde - h["inkop_sek"]) / h["inkop_sek"] * 100 if h["inkop_sek"] else 0.0
         per_holding[h["kort"]] = {"nuv": värde, "avk": h_avk}
-        print(f"  {h['namn']}: {h['antal']} x {price} {h['valuta']} x {rate} = {värde:.0f} SEK ({h_avk:+.1f}%)")
-    if not ok:
-        return None
+        print(f"  {h['namn']} [{used}]: {h['antal']} x {price} {h['valuta']} x {rate} = {värde:.0f} SEK ({h_avk:+.1f}%)")
+    # Returnera ALLTID per_holding (så kort som funkar fylls), plus om allt löste sig
     avk = (total_sek - inkop_total) / inkop_total * 100 if inkop_total else 0.0
-    return total_sek, inkop_total, avk, per_holding
+    return {"total_sek": total_sek, "inkop_sek": inkop_total, "avk": avk,
+            "per_holding": per_holding, "alla_ok": ok}
 
 
 # ── Anthropic API ────────────────────────────────────────────────────────────
@@ -280,8 +290,21 @@ def main():
     # 1) PORTFÖLJVÄRDE
     print("Hämtar kurser från Stooq...")
     pf = compute_portfolio()
-    if pf:
-        total_sek, inkop_sek, avk, per_holding = pf
+    per_holding = pf["per_holding"]
+    # Fyll ALLTID i de kort vars kurs vi lyckades hämta (oberoende av varandra)
+    for kort, v in per_holding.items():
+        hup = v["avk"] >= 0
+        cls = "pos" if hup else "neg"
+        nuv_html = f'{fmt_sek(v["nuv"])}'
+        avk_html = f'<span class="hv {cls}">{"▲ +" if hup else "▼ "}{v["avk"]:.1f}%</span>'
+        try:
+            html = replace_between(html, f"<!--NUV_{kort}_START-->", f"<!--NUV_{kort}_END-->", nuv_html)
+            html = replace_between(html, f"<!--AVK_{kort}_START-->", f"<!--AVK_{kort}_END-->", avk_html)
+        except RuntimeError:
+            pass
+    # Headerns totala portföljvärde: bara om ALLA innehav löste sig (annars vore det missvisande)
+    if pf["alla_ok"]:
+        total_sek, avk = pf["total_sek"], pf["avk"]
         up = avk >= 0
         col = "#4ade80" if up else "#f87171"
         val_html = f'<span style="color:#fff">{fmt_sek(total_sek)}</span>'
@@ -289,19 +312,8 @@ def main():
         html = replace_between(html, "<!--PORTF_VALUE_START-->", "<!--PORTF_VALUE_END-->", val_html)
         html = replace_between(html, "<!--PORTF_RETURN_START-->", "<!--PORTF_RETURN_END-->", ret_html)
         print(f"  Portföljvärde: {fmt_sek(total_sek)} ({avk:+.2f}%)")
-        # Fyll i per-aktie nuvärde + avkastning på korten
-        for kort, v in per_holding.items():
-            hup = v["avk"] >= 0
-            cls = "pos" if hup else "neg"
-            nuv_html = f'{fmt_sek(v["nuv"])}'
-            avk_html = f'<span class="hv {cls}">{"▲ +" if hup else "▼ "}{v["avk"]:.1f}%</span>'
-            try:
-                html = replace_between(html, f"<!--NUV_{kort}_START-->", f"<!--NUV_{kort}_END-->", nuv_html)
-                html = replace_between(html, f"<!--AVK_{kort}_START-->", f"<!--AVK_{kort}_END-->", avk_html)
-            except RuntimeError:
-                pass  # kort saknar markör (ej köpt aktie) - hoppa över
     else:
-        print("  Kunde inte räkna portföljvärde (kursdata saknas) - lämnar oförändrat.")
+        print("  Vissa innehav saknar kurs - fyllde de kort som gick, lämnar headertotalen orörd.")
 
     # 2) BRIEFING + NYHETER
     print("Hämtar briefing + nyheter (web search)...")
