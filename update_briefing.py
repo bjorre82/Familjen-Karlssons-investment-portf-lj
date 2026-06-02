@@ -1,26 +1,33 @@
 #!/usr/bin/env python3
 """
 Familjen Karlsson - Portföljkontrollrum
-Automatisk morning briefing-uppdaterare (robust JSON-version).
+Automatisk morgonuppdaterare (robust JSON + Stooq-kurser).
 
-Körs av GitHub Actions varje morgon. Anropar Anthropic API EN gång med web search.
-AI:n returnerar STRUKTURERAD DATA (JSON) - inte HTML. Scriptet bygger sedan HTML:en
-från fasta mallar, vilket garanterar att div-strukturen ALLTID är korrekt och att
-sidans layout aldrig kan brytas, oavsett vad AI:n svarar.
+Körs av GitHub Actions varje morgon (och manuellt via "Run workflow"-knappen).
 
-Skriver in resultatet i index.html mellan markörerna:
-  <!--BRIEFING_START--> ... <!--BRIEFING_END-->
-  <!--NEWS_START--> ... <!--NEWS_END-->
+Gör tre saker:
+  1. PORTFÖLJVÄRDE - hämtar riktiga kurser för innehaven från Stooq (gratis, ingen
+     nyckel), växlar till SEK, räknar ut totalvärde + total avkastning, skriver in
+     mellan <!--PORTF_VALUE_*--> och <!--PORTF_RETURN_*-->.
+  2. MORNING BRIEFING + NYHETER - AI:n returnerar STRUKTURERAD DATA (JSON), scriptet
+     bygger HTML från fasta mallar -> layouten kan aldrig brytas. Stora dagsrörelser
+     highlightas (klass "mover"/"crash" + procent-badge).
+  3. Uppdaterar datumstämplar.
 
-Kräver miljövariabel: ANTHROPIC_API_KEY  (GitHub Secret)
-Endast Pythons standardbibliotek - inga pip-beroenden.
+INNEHAV som har riktig kurs (HOLDINGS nedan) styr portföljvärdet. Bygg på listan
+när du köper fler aktier - lägg bara till en rad med antal, inköp och Stooq-symbol.
+
+Kräver GitHub Secret: ANTHROPIC_API_KEY
+Endast Pythons standardbibliotek.
 """
 
 import os
 import re
 import sys
+import csv
 import json
 import time
+import io
 import html as html_lib
 import datetime
 import urllib.request
@@ -30,22 +37,72 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 INDEX_FILE = "index.html"
 MODEL = "claude-sonnet-4-5-20250929"
 
-PORTFOLIO_CONTEXT = """Du är portföljövervaknings-AI för Familjen Karlsson. En 15-20-årig
-investeringsportfölj på ca 1 MSEK med hög risktolerans.
-
-INNEHAV att bevaka: ServiceNow (NOW, köpt), Fortum (FORTUM, köpt), ASML, Vinci (DG),
-Skanska, Swedbank, EQT, Investor, E.ON, Siemens Healthineers, IBM, IonQ, D-Wave,
-Rigetti, QuantumScape, Amprius, Solid Power, Moog, TransDigm, Stora Enso, Keyence,
-COMPASS Pathways.
-
-KÖPTRIGGERS (kontrollera om nivå nåtts):
-- Hochtief (HOT): KÖP om < 400 EUR
-- Vonovia (VNA): KÖP om < 20 EUR
-- Holmen (HOLM B): KÖP om kurs bryter 200-dagars MA (~360 SEK)
-- COMPASS (CMPS): FDA-nyheter / COMP006 fas-3-data Q3 2026
-- SpaceX (SPCX): IPO-nyheter - köp EJ noteringsdagen"""
+# ── INNEHAV (bygg på här när portföljen växer) ───────────────────────────────
+# valuta: aktiens handelsvaluta. Stooq-symbol enligt stooq.com.
+# antal: antal aktier. inkop: totalt inköpsvärde i SEK.
+HOLDINGS = [
+    {"namn": "ServiceNow", "antal": 50,  "inkop_sek": 47800, "stooq": "now.us",     "valuta": "USD", "kort": "NOW"},
+    {"namn": "Fortum",     "antal": 100, "inkop_sek": 22032, "stooq": "fortum.fi",  "valuta": "EUR", "kort": "FORTUM"},
+]
 
 
+# ── Kurshämtning från Stooq (gratis, ingen nyckel) ───────────────────────────
+def stooq_last(symbol):
+    """Hämtar senaste stängningskurs för en Stooq-symbol. Returnerar float eller None."""
+    url = f"https://stooq.com/q/l/?s={symbol}&f=sd2t2ohlcv&h&e=csv"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            text = r.read().decode("utf-8", "replace")
+        rows = list(csv.DictReader(io.StringIO(text)))
+        if not rows:
+            return None
+        close = rows[0].get("Close", "")
+        if close in ("", "N/D", "N/A"):
+            return None
+        return float(close)
+    except Exception as e:
+        print(f"  Stooq-fel för {symbol}: {e}")
+        return None
+
+
+def fx_to_sek(cur):
+    """Växelkurs cur->SEK via Stooq. SEK=1.0."""
+    if cur == "SEK":
+        return 1.0
+    sym = {"USD": "usdsek", "EUR": "eursek"}.get(cur)
+    if not sym:
+        return None
+    return stooq_last(sym)
+
+
+def compute_portfolio():
+    """Returnerar (total_sek, inkop_sek, avk_pct, per_holding) eller None om data saknas.
+    per_holding = {kort: {"nuv": SEK, "avk": pct}}"""
+    total_sek = 0.0
+    inkop_total = 0.0
+    per_holding = {}
+    ok = True
+    for h in HOLDINGS:
+        inkop_total += h["inkop_sek"]
+        price = stooq_last(h["stooq"])
+        rate = fx_to_sek(h["valuta"])
+        if price is None or rate is None:
+            print(f"  Saknar kurs/FX för {h['namn']} ({h['stooq']}, {h['valuta']})")
+            ok = False
+            continue
+        värde = h["antal"] * price * rate
+        total_sek += värde
+        h_avk = (värde - h["inkop_sek"]) / h["inkop_sek"] * 100 if h["inkop_sek"] else 0.0
+        per_holding[h["kort"]] = {"nuv": värde, "avk": h_avk}
+        print(f"  {h['namn']}: {h['antal']} x {price} {h['valuta']} x {rate} = {värde:.0f} SEK ({h_avk:+.1f}%)")
+    if not ok:
+        return None
+    avk = (total_sek - inkop_total) / inkop_total * 100 if inkop_total else 0.0
+    return total_sek, inkop_total, avk, per_holding
+
+
+# ── Anthropic API ────────────────────────────────────────────────────────────
 def call_anthropic(prompt, max_tokens=4000, max_retries=5):
     body = {
         "model": MODEL,
@@ -54,24 +111,17 @@ def call_anthropic(prompt, max_tokens=4000, max_retries=5):
         "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
     }
     data_bytes = json.dumps(body).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
-    }
+    headers = {"Content-Type": "application/json", "x-api-key": API_KEY,
+               "anthropic-version": "2023-06-01"}
     last_err = None
     for attempt in range(max_retries):
-        req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
-            data=data_bytes, headers=headers, method="POST",
-        )
+        req = urllib.request.Request("https://api.anthropic.com/v1/messages",
+                                     data=data_bytes, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=400) as resp:
                 data = json.loads(resp.read())
-            return "".join(
-                b.get("text", "") for b in data.get("content", [])
-                if b.get("type") == "text"
-            ).strip()
+            return "".join(b.get("text", "") for b in data.get("content", [])
+                           if b.get("type") == "text").strip()
         except urllib.error.HTTPError as e:
             last_err = e
             try:
@@ -80,109 +130,88 @@ def call_anthropic(prompt, max_tokens=4000, max_retries=5):
                 pass
             if e.code in (429, 500, 503, 529):
                 wait = (attempt + 1) * 30
-                print(f"  Väntar {wait}s och försöker igen ({attempt + 1}/{max_retries})...")
+                print(f"  Väntar {wait}s, försök {attempt + 1}/{max_retries}...")
                 time.sleep(wait)
                 continue
             raise
     raise last_err
 
 
-def esc(s):
-    """HTML-escape så genererad text aldrig kan bryta strukturen."""
-    return html_lib.escape(str(s), quote=True)
+PORTFOLIO_CONTEXT = """Du är portföljövervaknings-AI för Familjen Karlsson. En 15-20-årig
+investeringsportfölj med hög risktolerans.
+INNEHAV: ServiceNow (NOW, köpt), Fortum (FORTUM, köpt), ASML, Vinci, Skanska, Swedbank,
+EQT, Investor, E.ON, Siemens Healthineers, IBM, IonQ, D-Wave, Rigetti, QuantumScape,
+Amprius, Solid Power, Moog, TransDigm, Stora Enso, Keyence, COMPASS Pathways.
+KÖPTRIGGERS: Hochtief <400 EUR, Vonovia <20 EUR, Holmen MA-brott ~360 SEK,
+COMPASS COMP006 fas-3 Q3 2026, SpaceX IPO (köp ej noteringsdagen)."""
 
 
 def get_data(date_str):
-    """AI returnerar JSON. Scriptet bygger HTML. Strukturen kan aldrig brytas."""
     prompt = f"""{PORTFOLIO_CONTEXT}
 
 Datum: {date_str}.
+Sök DAGENS och denna veckas nyheter med web search. Var särskilt uppmärksam på STORA
+dagsrörelser (aktier som rör sig mer än +/-5% idag) - de är viktigast att rapportera.
 
-Sök DAGENS och denna veckas nyheter med web search för innehaven och triggernivåerna ovan.
-
-Returnera ENDAST giltig JSON (ingen markdown, ingen text runtom) i EXAKT detta format:
-
+Returnera ENDAST giltig JSON (ingen markdown):
 {{
-  "kopsignaler": [
-    {{"typ": "gron", "rubrik": "Kort rubrik", "text": "Beskrivning med siffror."}}
-  ],
-  "nyheter_brief": [
-    {{"ticker": "NOW", "typ": "positiv", "rubrik": "Kort.", "text": "Beskrivning."}}
-  ],
-  "atgarder": ["Åtgärd 1", "Åtgärd 2", "Åtgärd 3"],
-  "nyheter": [
-    {{"ticker": "NOW", "typ": "positiv", "rubrik": "Rubrik", "text": "Längre brödtext med detaljer och siffror."}}
-  ]
+  "kopsignaler": [{{"typ":"gron|rod|bla","rubrik":"...","text":"..."}}],
+  "nyheter_brief": [{{"ticker":"NOW","typ":"positiv|negativ|neutral","rubrik":"...","text":"..."}}],
+  "atgarder": ["...","...","..."],
+  "nyheter": [{{"ticker":"NOW","typ":"positiv|negativ|neutral","rubrik":"...","text":"...","rorelse_pct":-8.0}}]
 }}
 
 Regler:
-- kopsignaler: 2-4 st. "typ" = "gron" (köpsignal), "rod" (varning) eller "bla" (info/IPO).
-- nyheter_brief: 4-6 korta nyheter. "typ" = "positiv", "negativ" eller "neutral".
-- atgarder: exakt 3 konkreta åtgärder för dagen.
-- nyheter: de 6 viktigaste nyheterna med längre text. "typ" = "positiv"/"negativ"/"neutral".
-- Skriv på svenska, var konkret med kurser och siffror.
-- INGEN HTML i texten. Bara ren text. Returnera ENBART JSON-objektet."""
-    raw = call_anthropic(prompt, max_tokens=4000)
-    # Plocka ut JSON-objektet robust
-    raw = raw.replace("```json", "").replace("```", "").strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1:
-        raise RuntimeError("Hittade ingen JSON i svaret")
-    return json.loads(raw[start:end + 1])
+- kopsignaler: 2-4 st. nyheter_brief: 4-6 korta. atgarder: exakt 3. nyheter: 6 st.
+- "rorelse_pct" i nyheter: dagens procentuella kursrörelse om känd (t.ex. -8.0 eller 9.4),
+  annars utelämna fältet. Aktier med stor rörelse ska ALLTID vara med bland nyheterna.
+- Skriv på svenska, var konkret med siffror. INGEN HTML i texten - bara ren text."""
+    raw = call_anthropic(prompt, 4000).replace("```json", "").replace("```", "").strip()
+    a, b = raw.find("{"), raw.rfind("}")
+    if a == -1 or b == -1:
+        raise RuntimeError("Ingen JSON i svaret")
+    return json.loads(raw[a:b + 1])
 
 
-# ── HTML-byggare (fasta mallar - alltid balanserade) ─────────────────────────
+# ── HTML-byggare (fasta mallar = alltid balanserade) ─────────────────────────
+def esc(s):
+    return html_lib.escape(str(s), quote=True)
+
+
 SIG_COLORS = {"gron": "#1A6B2A", "rod": "#8B0000", "bla": "#3b82f6"}
 SIG_EMOJI = {"gron": "🟢", "rod": "🔴", "bla": "🚀"}
-NEWS_BADGE = {
-    "positiv": ("#DFF0D8", "#1A6B2A"),
-    "negativ": ("#FDECEA", "#8B0000"),
-    "neutral": ("#FFF3CD", "#B8860B"),
-}
+NEWS_BADGE = {"positiv": ("#DFF0D8", "#1A6B2A"), "negativ": ("#FDECEA", "#8B0000"),
+              "neutral": ("#FFF3CD", "#B8860B")}
 NEWS_DOT = {"positiv": "#22c55e", "negativ": "#ef4444", "neutral": "#f59e0b"}
 
 
 def build_briefing(data, date_str):
-    # Köpsignaler
-    sig_rows = ""
+    sig = ""
     for s in data.get("kopsignaler", []):
         c = SIG_COLORS.get(s.get("typ", "gron"), "#1A6B2A")
         e = SIG_EMOJI.get(s.get("typ", "gron"), "🟢")
-        sig_rows += (f'<div style="margin-bottom:7px"><b style="color:{c}">{e} '
-                     f'{esc(s.get("rubrik",""))}</b><br>{esc(s.get("text",""))}</div>')
-
-    # Nyheter (korta, i briefing)
-    news_rows = ""
+        sig += (f'<div style="margin-bottom:7px"><b style="color:{c}">{e} '
+                f'{esc(s.get("rubrik",""))}</b><br>{esc(s.get("text",""))}</div>')
+    nb = ""
     for n in data.get("nyheter_brief", []):
         bg, fg = NEWS_BADGE.get(n.get("typ", "neutral"), NEWS_BADGE["neutral"])
-        news_rows += (f'<div><span style="background:{bg};color:{fg};font-size:9px;'
-                      f'font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">'
-                      f'{esc(n.get("ticker",""))}</span><b>{esc(n.get("rubrik",""))}</b> '
-                      f'{esc(n.get("text",""))}</div>')
-
-    # Åtgärder
-    atg = data.get("atgarder", [])[:3]
-    atg_rows = "".join(
-        f'<div><b>{i+1}.</b> {esc(a)}</div>' for i, a in enumerate(atg)
-    )
-
+        nb += (f'<div><span style="background:{bg};color:{fg};font-size:9px;font-weight:bold;'
+               f'padding:1px 6px;border-radius:4px;margin-right:6px">{esc(n.get("ticker",""))}</span>'
+               f'<b>{esc(n.get("rubrik",""))}</b> {esc(n.get("text",""))}</div>')
+    atg = "".join(f'<div><b>{i+1}.</b> {esc(a)}</div>'
+                  for i, a in enumerate(data.get("atgarder", [])[:3]))
     return f'''
     <div class="brf-sec" style="background:#F0FDF4;border-left:4px solid #1A6B2A">
       <div class="brf-sh" style="color:#1A6B2A">⚡ Köpsignaler och kritiska varningar</div>
-      {sig_rows}
+      {sig}
     </div>
     <div class="brf-sec" style="background:#EFF6FF;border-left:4px solid #1F3864">
       <div class="brf-sh" style="color:#1F3864">📊 Viktiga nyheter</div>
-      <div style="display:flex;flex-direction:column;gap:7px;font-size:11px">
-        {news_rows}
-      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;font-size:11px">{nb}</div>
     </div>
     <div class="brf-sec" style="background:#FFFBEB;border-left:4px solid #B8860B">
       <div class="brf-sh" style="color:#B8860B">✅ Dagens 3 prioriterade åtgärder</div>
-      <div style="font-size:11px;display:flex;flex-direction:column;gap:5px">
-        {atg_rows}
-      </div>
+      <div style="font-size:11px;display:flex;flex-direction:column;gap:5px">{atg}</div>
     </div>
     <div style="font-size:9px;color:#888;text-align:center;margin-top:4px">Morning Briefing {esc(date_str)} · automatiskt genererad</div>'''
 
@@ -191,12 +220,27 @@ def build_news(data, date_str):
     cards = ""
     for n in data.get("nyheter", []):
         dot = NEWS_DOT.get(n.get("typ", "neutral"), "#f59e0b")
-        cards += f'''<div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid {dot}">
+        # Stor rörelse -> highlight + badge
+        cls = "nc"
+        badge = ""
+        pct = n.get("rorelse_pct")
+        if isinstance(pct, (int, float)):
+            if pct <= -5:
+                cls = "nc crash"
+                badge = f'<span class="movebadge down">▼ {pct:.1f}%</span>'
+            elif pct >= 5:
+                cls = "nc mover"
+                badge = f'<span class="movebadge up">▲ +{pct:.1f}%</span>'
+            elif pct < 0:
+                badge = f'<span class="movebadge down">▼ {pct:.1f}%</span>'
+            elif pct > 0:
+                badge = f'<span class="movebadge up">▲ +{pct:.1f}%</span>'
+        cards += f'''<div class="{cls}" onclick="this.classList.toggle('open')" style="border-left:3px solid {dot}">
   <div style="display:flex;gap:8px;align-items:flex-start">
     <div style="width:8px;height:8px;border-radius:50%;background:{dot};flex-shrink:0;margin-top:4px"></div>
     <div style="flex:1">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">{esc(n.get("ticker",""))}</span><span class="ndate">{esc(date_str)}</span>
+        <span class="nticker">{esc(n.get("ticker",""))}</span><span class="ndate">{esc(date_str)}</span>{badge}
       </div>
       <div class="nhl">{esc(n.get("rubrik",""))}</div>
       <div class="nbody">{esc(n.get("text",""))}</div>
@@ -207,12 +251,15 @@ def build_news(data, date_str):
     return cards
 
 
-def replace_between(html, start_marker, end_marker, new_inner):
-    s = html.find(start_marker)
-    e = html.find(end_marker)
+def replace_between(html, a, b, inner):
+    s, e = html.find(a), html.find(b)
     if s == -1 or e == -1:
-        raise RuntimeError(f"Markör saknas: {start_marker} / {end_marker}")
-    return html[:s + len(start_marker)] + "\n" + new_inner + "\n" + html[e:]
+        raise RuntimeError(f"Markör saknas: {a}/{b}")
+    return html[:s + len(a)] + inner + html[e:]
+
+
+def fmt_sek(n):
+    return f"{n:,.0f}".replace(",", " ") + " SEK"
 
 
 def main():
@@ -221,44 +268,61 @@ def main():
         sys.exit(1)
 
     today = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=2)))
-    weekdays = ["måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag", "söndag"]
-    months = ["januari", "februari", "mars", "april", "maj", "juni", "juli",
-              "augusti", "september", "oktober", "november", "december"]
-    date_str = f"{weekdays[today.weekday()].capitalize()} {today.day} {months[today.month-1]} {today.year}"
-    print(f"Genererar för: {date_str}")
+    wd = ["måndag", "tisdag", "onsdag", "torsdag", "fredag", "lördag", "söndag"]
+    mo = ["januari", "februari", "mars", "april", "maj", "juni", "juli", "augusti",
+          "september", "oktober", "november", "december"]
+    date_str = f"{wd[today.weekday()].capitalize()} {today.day} {mo[today.month-1]} {today.year}"
+    print(f"Uppdaterar för: {date_str}")
 
     with open(INDEX_FILE, "r", encoding="utf-8") as f:
         html = f.read()
 
-    print("Hämtar data från API (web search)...")
-    data = get_data(date_str)
-    print(f"  Köpsignaler: {len(data.get('kopsignaler', []))}, "
-          f"Nyheter-brief: {len(data.get('nyheter_brief', []))}, "
-          f"Åtgärder: {len(data.get('atgarder', []))}, "
-          f"Nyheter: {len(data.get('nyheter', []))}")
+    # 1) PORTFÖLJVÄRDE
+    print("Hämtar kurser från Stooq...")
+    pf = compute_portfolio()
+    if pf:
+        total_sek, inkop_sek, avk, per_holding = pf
+        up = avk >= 0
+        col = "#4ade80" if up else "#f87171"
+        val_html = f'<span style="color:#fff">{fmt_sek(total_sek)}</span>'
+        ret_html = f'<span style="color:{col}">{"▲ +" if up else "▼ "}{avk:.2f}%</span>'
+        html = replace_between(html, "<!--PORTF_VALUE_START-->", "<!--PORTF_VALUE_END-->", val_html)
+        html = replace_between(html, "<!--PORTF_RETURN_START-->", "<!--PORTF_RETURN_END-->", ret_html)
+        print(f"  Portföljvärde: {fmt_sek(total_sek)} ({avk:+.2f}%)")
+        # Fyll i per-aktie nuvärde + avkastning på korten
+        for kort, v in per_holding.items():
+            hup = v["avk"] >= 0
+            cls = "pos" if hup else "neg"
+            nuv_html = f'{fmt_sek(v["nuv"])}'
+            avk_html = f'<span class="hv {cls}">{"▲ +" if hup else "▼ "}{v["avk"]:.1f}%</span>'
+            try:
+                html = replace_between(html, f"<!--NUV_{kort}_START-->", f"<!--NUV_{kort}_END-->", nuv_html)
+                html = replace_between(html, f"<!--AVK_{kort}_START-->", f"<!--AVK_{kort}_END-->", avk_html)
+            except RuntimeError:
+                pass  # kort saknar markör (ej köpt aktie) - hoppa över
+    else:
+        print("  Kunde inte räkna portföljvärde (kursdata saknas) - lämnar oförändrat.")
 
+    # 2) BRIEFING + NYHETER
+    print("Hämtar briefing + nyheter (web search)...")
+    data = get_data(date_str)
     briefing_html = build_briefing(data, date_str)
     news_html = build_news(data, date_str)
-
-    # Säkerhetskontroll: div-balans innan vi skriver
     for label, frag in [("briefing", briefing_html), ("nyheter", news_html)]:
-        o, c = frag.count("<div"), frag.count("</div>")
-        if o != c:
-            print(f"VARNING: {label} obalanserad ({o}/{c}) - hoppar över skrivning",
-                  file=sys.stderr)
+        if frag.count("<div") != frag.count("</div>"):
+            print(f"VARNING: {label} obalanserad - avbryter", file=sys.stderr)
             sys.exit(1)
+    html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", "\n" + briefing_html + "\n")
+    html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", "\n" + news_html + "\n")
 
-    html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", briefing_html)
-    html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", news_html)
-
-    html = re.sub(r'🌅 Morning Briefing — [^<]*',
-                  f'🌅 Morning Briefing — {date_str}', html, count=1)
+    # 3) Datumstämplar
+    html = re.sub(r'🌅 Morning Briefing — [^<]*', f'🌅 Morning Briefing — {date_str}', html, count=1)
     html = re.sub(r'<div class="news-hdr-s">[^<]*</div>',
                   f'<div class="news-hdr-s">Uppdaterat {date_str}</div>', html, count=1)
 
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         f.write(html)
-    print("index.html uppdaterad - layout garanterat intakt.")
+    print("index.html uppdaterad.")
 
 
 if __name__ == "__main__":
