@@ -17,7 +17,9 @@ import os
 import sys
 import json
 import datetime
+import time
 import urllib.request
+import urllib.error
 
 API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 INDEX_FILE = "index.html"
@@ -41,29 +43,44 @@ KÖPTRIGGERS (kontrollera om nivå nåtts):
 Xetra-köp (E.ON, Hochtief, Vonovia, Siemens Healthineers) sker via Swedbank Mäklare."""
 
 
-def call_anthropic(prompt, max_tokens=3000):
+def call_anthropic(prompt, max_tokens=3000, max_retries=4):
     body = {
         "model": MODEL,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
         "tools": [{"type": "web_search_20250305", "name": "web_search"}],
     }
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-api-key": API_KEY,
-            "anthropic-version": "2023-06-01",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=300) as resp:
-        data = json.loads(resp.read())
-    text = "".join(
-        b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-    )
-    return text.strip()
+    data_bytes = json.dumps(body).encode("utf-8")
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": API_KEY,
+        "anthropic-version": "2023-06-01",
+    }
+    last_err = None
+    for attempt in range(max_retries):
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=data_bytes, headers=headers, method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=300) as resp:
+                data = json.loads(resp.read())
+            text = "".join(
+                b.get("text", "") for b in data.get("content", [])
+                if b.get("type") == "text"
+            )
+            return text.strip()
+        except urllib.error.HTTPError as e:
+            last_err = e
+            # 429 = rate limit, 529 = overloaded -> vänta och försök igen
+            if e.code in (429, 500, 503, 529):
+                wait = (attempt + 1) * 20  # 20s, 40s, 60s, 80s
+                print(f"  API svarade {e.code}, väntar {wait}s och försöker igen "
+                      f"(försök {attempt + 1}/{max_retries})...")
+                time.sleep(wait)
+                continue
+            raise
+    raise last_err
 
 
 def clean(html_text):
@@ -166,6 +183,9 @@ def main():
     html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", briefing_html)
     print(f"  Briefing: {len(briefing_html)} tecken")
 
+    print("Pausar 15s för att undvika rate limit...")
+    time.sleep(15)
+
     print("Hämtar senaste nyheter (web search)...")
     news_html = generate_news(date_str)
     html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", news_html)
@@ -184,3 +204,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
