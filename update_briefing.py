@@ -73,9 +73,15 @@ def call_anthropic(prompt, max_tokens=4000, max_retries=5):
             ).strip()
         except urllib.error.HTTPError as e:
             last_err = e
+            # Skriv ut API:ts faktiska felmeddelande (hjälper vid 400)
+            try:
+                err_body = e.read().decode("utf-8")
+                print(f"  API-fel {e.code}: {err_body}")
+            except Exception:
+                pass
             if e.code in (429, 500, 503, 529):
                 wait = (attempt + 1) * 30  # 30s, 60s, 90s, 120s, 150s
-                print(f"  API svarade {e.code}, väntar {wait}s och försöker igen "
+                print(f"  Väntar {wait}s och försöker igen "
                       f"(försök {attempt + 1}/{max_retries})...")
                 time.sleep(wait)
                 continue
