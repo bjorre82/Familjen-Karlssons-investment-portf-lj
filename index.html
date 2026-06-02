@@ -42,6 +42,11 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
 .nc.open{background:#fafafa}
 .nc.open .nbody{display:block}
 .nc.open .narr{transform:rotate(180deg)}
+.nc.mover{background:#FFF8E1;box-shadow:inset 3px 0 0 #f59e0b}
+.nc.crash{background:#FEF2F2;box-shadow:inset 3px 0 0 #ef4444}
+.nc .movebadge{font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-left:6px}
+.nc .movebadge.up{background:#DFF0D8;color:#1A6B2A}
+.nc .movebadge.down{background:#FDECEA;color:#8B0000}
 .nticker{font-size:9px;font-weight:bold;background:#f0f0f0;padding:1px 6px;border-radius:4px;color:var(--gy)}
 .ndate{font-size:10px;color:#aaa}
 .nhl{font-size:12px;font-weight:600;color:#111;line-height:1.4;margin-top:3px}
@@ -93,6 +98,11 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
 .no-chart{height:80px;display:flex;align-items:center;justify-content:center;background:var(--lg);font-size:11px;color:var(--gy);border-top:1px solid var(--b);border-bottom:1px solid var(--b)}
 .card-foot{padding:5px 12px;display:flex;justify-content:space-between;background:var(--lg)}
 .card-foot span{font-size:9px;color:var(--gy)}
+.hold-box{padding:7px 12px;background:#F0FDF4;border-top:1px solid #86EFAC;display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:10px}
+.hold-box .hl{color:#666}
+.hold-box .hv{font-weight:bold;color:#1F3864;text-align:right}
+.hold-box .hv.pos{color:#1A6B2A}.hold-box .hv.neg{color:#8B0000}
+.hold-box .full{grid-column:1/3;border-top:1px dashed #86EFAC;padding-top:3px;margin-top:1px;display:flex;justify-content:space-between}
 .card-bev{padding:5px 12px 7px;background:var(--lg);border-top:1px solid var(--b);font-size:9px;color:var(--gy);line-height:1.5}
 /* STRATEGY MODAL */
 .modal-bg{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.75);z-index:400;align-items:center;justify-content:center;padding:16px}
@@ -145,9 +155,12 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
   </div>
   <div class="hstats">
     <div class="hstat"><div class="hstat-l">Inköpsvärde</div><div class="hstat-v" id="hInkop">—</div></div>
-    <div class="hstat"><div class="hstat-l">Nuv. värde</div><div class="hstat-v" id="hNuv">—</div></div>
-    <div class="hstat"><div class="hstat-l">Totalt %</div><div class="hstat-v" id="hTot">—</div></div>
-    <div class="hstat"><div class="hstat-l">Idag %</div><div class="hstat-v" id="hIdag">—</div></div>
+    <div class="hstat"><div class="hstat-l">Portföljvärde</div><div class="hstat-v"><!--PORTF_VALUE_START-->—<!--PORTF_VALUE_END--></div></div>
+    <div class="hstat"><div class="hstat-l">Total avkastning</div><div class="hstat-v"><!--PORTF_RETURN_START-->—<!--PORTF_RETURN_END--></div></div>
+    <a href="https://github.com/bjorre82/Familjen-Karlssons-investment-portf-lj/actions/workflows/morning-briefing.yml" target="_blank" rel="noopener" class="hstat" style="text-decoration:none;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;background:rgba(74,222,128,.15);border-color:rgba(74,222,128,.4)" title="Öppnar GitHub - tryck sedan Run workflow">
+      <div style="font-size:18px;line-height:1">🔄</div>
+      <div class="hstat-l" style="color:#4ade80">Uppdatera nu</div>
+    </a>
   </div>
   <div class="htime" id="hTime"></div>
 </div>
@@ -167,28 +180,48 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
 <!-- MORNING BRIEFING -->
 <div style="border-radius:10px;border:1px solid var(--b);overflow:hidden">
   <div class="brf-hdr" onclick="document.getElementById('brfBody').style.display=document.getElementById('brfBody').style.display==='block'?'none':'block';this.querySelector('.barr').textContent=document.getElementById('brfBody').style.display==='block'?'▲':'▼'">
-    <div><div class="brf-title">🌅 Morning Briefing — Tisdag 2 juni 2026</div><div class="brf-sub">Live AI-analys · Köpsignaler · Nyheter · Åtgärder</div></div>
+    <div><div class="brf-title">🌅 Morning Briefing — Måndag 1 juni 2026</div><div class="brf-sub">Live AI-analys · Köpsignaler · Nyheter · Åtgärder</div></div>
     <span class="barr" style="color:rgba(255,255,255,.7);font-size:14px">▼</span>
   </div>
   <div class="brf-body" id="brfBody"><!--BRIEFING_START-->
 
     <div class="brf-sec" style="background:#F0FDF4;border-left:4px solid #1A6B2A">
       <div class="brf-sh" style="color:#1A6B2A">⚡ Köpsignaler och kritiska varningar</div>
-      <div style="margin-bottom:7px"><b style="color:#1A6B2A">🟢 Vonovia under köptrigger 20 EUR</b><br>VNA handlas 19,85 EUR, under köptriggern 20 EUR. Stark återhämtning i tysk bostadsmarknad med lägre räntor och förbättrad sentiment öppnar köpfönster.</div><div style="margin-bottom:7px"><b style="color:#3b82f6">🚀 COMPASS fas 3-data närmar sig Q3</b><br>COMP006-studien för psilocybinterapi vid PTSD förväntas rapportera topline-resultat Q3 2026. FDA breakthrough designation redan beviljad, data avgörande för godkännande.</div><div style="margin-bottom:7px"><b style="color:#1A6B2A">🟢 ServiceNow stark momentum</b><br>NOW handlas kring 875 USD efter stark Q1-rapport. AI-produkter driver tillväxt med över 30 procent årlig försäljningsökning, fortsatt expansionspotential.</div><div style="margin-bottom:7px"><b style="color:#3b82f6">🚀 SpaceX IPO-spekulationer intensifieras</b><br>Rapporter om att SpaceX förbereder börsnotering under 2026 ökar, värdering estimeras till 350 miljarder USD. Invänta notering men köp EJ på listningsdagen enligt strategi.</div>
+      <div style="margin-bottom:7px"><b style="color:#1A6B2A">🟢 ServiceNow (NOW) — +36% sedan köpet!</b><br>ServiceNow steg +14,38% på fredagen 29 maj till $124,37 — tredje dagen i rad med uppgångar, +37,43% på två veckor. Du köpte på ~$92. Din position på 50 aktier har gått från 47 800 SEK till ~64 500 SEK — en uppgång på ca <b>+16 700 SEK (+35%) på drygt en vecka</b>. Institutionellt kapital strömmar in efter Trumps OGE-disclosure. Exceptionellt köptillfälle bekräftat.</div>
+      <div style="margin-bottom:7px"><b style="color:#8B0000">🔴 Vonovia (VNA) — KÖPTRIGGER NÄRA: 21,30 EUR idag</b><br>Vonovia handlar 21,30 EUR per 1 juni, med ett 52-veckors lägsta på 20,09 EUR. Vi är nu bara 1,30 EUR från köptriggern på 20 EUR. Sätt ett kursalarm i Swedbank på 20,50 EUR nu. 10 analytiker rekommenderar Köp, konsensus 32,82 EUR (+54% uppside). Halvårsrapport 5 aug 2026.</div>
+      <div><b style="color:#3b82f6">🚀 SpaceX IPO — tidslinje uppdaterad</b><br>Roadshow startar 8 juni, handel förväntad sen juni under ticker SPCX på Nasdaq. SpaceX siktar på $1,75 biljoner i värdering med Goldman Sachs som lead och 21 banker totalt. 30% av aktierna är öronmärkta direkt till privatsparare via Robinhood, Fidelity och Schwab — tre gånger normal retailandel. <b>Strategi oförändrad: KÖP EJ på noteringsdagen. Aktivera kassareservationen 6 månader efter lock-up.</b></div>
     </div>
+
     <div class="brf-sec" style="background:#EFF6FF;border-left:4px solid #1F3864">
-      <div class="brf-sh" style="color:#1F3864">📊 Viktiga nyheter</div>
+      <div class="brf-sh" style="color:#1F3864">📊 Viktiga nyheter sedan 24 maj</div>
       <div style="display:flex;flex-direction:column;gap:7px;font-size:11px">
-        <div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">ASML</span><b>Stark orderingång Q2</b> ASML rapporterar rekordhög orderbok med ökad efterfrågan på EUV-system från asiatiska tillverkare.</div><div><span style="background:#FFF3CD;color:#B8860B;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">FORTUM</span><b>Stabila elpriser Norden</b> Nordiska elpriser stabila kring 45 EUR/MWh, gynnsamt för Fortums vattenkraft och kärnkraftsportfölj.</div><div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">EQT</span><b>Ny fond på 25 miljarder EUR</b> EQT stänger rekordstort private equity-fund på 25 miljarder EUR, stärker förvaltningsintäkter framåt.</div><div><span style="background:#FFF3CD;color:#B8860B;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">IONQ</span><b>Kvantpartnerskap utökas</b> IonQ annonserar samarbete med europeisk forskningsmyndighet, fokus på optimeringsapplikationer.</div><div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">IBM</span><b>AI-försäljning accelererar</b> IBMs watsonx-plattform visar 45 procent tillväxt i Q1, hybridmolnstrategi levererar resultat.</div><div><span style="background:#FFF3CD;color:#B8860B;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">SWEDBANK</span><b>Stabil kreditkvalitet</b> Swedbank rapporterar fortsatt låga kreditförluster trots högre räntemiljö, utdelning bekräftad.</div>
+        <div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">🟢 IBM</span><b>$10 miljarder quantum-satsning.</b> IBM meddelade en $10 mdr investering i quantum computing över fem år med målet att ha en kommersiell fault-tolerant quantum-dator 2029. IBM-aktien steg +7% idag till ~$320. Massiv validering av vår IBM-tes — Anderon foundry bekräftad 21 maj.</div>
+        <div><span style="background:#FDECEA;color:#8B0000;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">🔴 IONQ/RGTI</span><b>Profit-taking idag.</b> IonQ -4% till ~$69 och Rigetti -4% till ~$24, trots intakta fundamenta — kapital koncentreras till IBM efter deras annons. Klassisk vinsthemtagning, inte bolagsspecifika nyheter. Håll positionerna.</div>
+        <div><span style="background:#FFF3CD;color:#B8860B;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">⚠️ QUANTUM</span><b>Insider-varning att ta på allvar.</b> Insiders på IonQ, Rigetti och D-Wave har nettosålt aktier för totalt $931 miljoner under fem år. IonQ handlar på P/S 109x, Rigetti 836x, D-Wave 791x — långt över det historiskt hållbara taket på 30x. Inga nya köp i quantum-satelliterna — håll befintliga små positioner.</div>
+        <div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">🟢 NOW</span><b>Institutionellt kapital flödar in.</b> Analytikerkonsensus ligger nu på $141,85 med 33 analytiker på Köp. ServiceNow drar stort institutionellt intresse enligt senaste filings.</div>
+        <div><span style="background:#DBEAFE;color:#1D4ED8;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">🔵 SPCX</span><b>SpaceX omdefinierar IPO-marknaden.</b> 5-för-1-aktiedelning genomförd 4 maj. Starlink genererade $11,4 mdr intäkter 2025 med $4,4 mdr rörelseresultat — en ökning på 120% YoY. Ett SaaS-bolag i rymden.</div>
+        <div><span style="background:#FDECEA;color:#8B0000;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">🔴 HOT</span><b>Hochtief ~481 EUR — avvakta.</b> Fortfarande 12% ÖVER analytikerkonsensus 421 EUR. Vår köptrigger: 380–400 EUR. Q2-rapport 27 juli är nästa checkpoint.</div>
       </div>
     </div>
+
+    <div class="brf-sec" style="background:#F5F3FF;border-left:4px solid #6D28D9">
+      <div class="brf-sh" style="color:#6D28D9">🌍 Geopolitik och makro</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11px">
+        <div><b>⚛️ USA gör quantum till nationell säkerhetsfråga.</b> IBM:s $10 mdr-annons kombinerat med CHIPS Act-paketet på $2 mdr bekräftar att quantum nu behandlas som strategisk infrastruktur på samma nivå som halvledare. BCG förutspår att quantum kan addera upp till $850 miljarder i globalt ekonomiskt värde till 2040. Vår positionering är rätt — IBM som ankare, satelliterna som optioner.</div>
+        <div><b>🚀 SpaceX omdefinierar vad en IPO kan vara.</b> 30% retail-allokering är tre gånger det normala. Starlink är på väg att bli ett globalt mobilkommunikationsmonopol — AT&T, T-Mobile och Verizon bildade ett gemensamt bolag i maj bara för att möta Starlinks direktsatellittjänst.</div>
+      </div>
+    </div>
+
     <div class="brf-sec" style="background:#FFFBEB;border-left:4px solid #B8860B">
       <div class="brf-sh" style="color:#B8860B">✅ Dagens 3 prioriterade åtgärder</div>
       <div style="font-size:11px;display:flex;flex-direction:column;gap:5px">
-        <div><b>1.</b> Köp Vonovia (VNA) under 20 EUR - triggernivå nådd, allokera 40 000 - 60 000 SEK vid nuvarande kurs 19,85 EUR.</div><div><b>2.</b> Bevaka Holmen (HOLM B) inför 200-dagars MA-brott kring 360 SEK, kursen nu 355 SEK - förbered order vid genombrott.</div><div><b>3.</b> Monitorera COMPASS Pathways COMP006-kommunikation löpande, fas 3-data Q3 2026 kan ge 40-80 procent kursrörelse vid positiva resultat.</div>
+        <div><b>1. Uppdatera kontrollrummet med ServiceNow-kursen.</b> NOW ~$124 mot inköp ~$92, +36% på en vecka. Header-statistiken är redan uppdaterad (1 290 SEK/aktie).</div>
+        <div><b>2. Sätt kursalarm Vonovia 20,50 EUR i Swedbank nu.</b> Bara 1,30 EUR från köptriggern på 20 EUR. Halvårsrapport 5 aug kan driva kursen åt båda hållen — ha kapital redo.</div>
+        <div><b>3. Läs SpaceX prospektet när roadshown startar 8 juni.</b> Bestäm din maxkurs INNAN banker och media skapar momentum. Vänta sedan 6 månader efter notering innan köp.</div>
       </div>
     </div>
-    <div style="font-size:9px;color:#888;text-align:center;margin-top:4px">Morning Briefing Tisdag 2 juni 2026 · automatiskt genererad</div>
+
+    <div style="font-size:9px;color:#888;text-align:center;margin-top:4px">Morning Briefing 1 juni 2026 · Nästa datum: SpaceX roadshow 8 jun · Notering ~12 jun · Medtronic Q4 3 jun · Hochtief Q2 27 jul · Vonovia 5 aug · COMPASS fas-3 Q3</div>
 <!--BRIEFING_END-->
 
   </div>
@@ -198,17 +231,41 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
 <div class="news-wrap">
   <div class="news-hdr">
     <div class="news-hdr-t">📰 Senaste nyheter — klicka för att expandera</div>
-    <div class="news-hdr-s">Uppdaterat Tisdag 2 juni 2026</div>
+    <div class="news-hdr-s">Uppdaterat 1 juni 2026 · 8 nyheter</div>
   </div><!--NEWS_START-->
-<div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
+  <div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
   <div style="display:flex;gap:8px;align-items:flex-start">
     <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
     <div style="flex:1">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">VNA</span><span class="ndate">Tisdag 2 juni 2026</span>
+        <span class="nticker">NOW</span><span class="ndate">1 jun 2026</span>
       </div>
-      <div class="nhl">Vonovia når köptrigger under 20 EUR</div>
-      <div class="nbody">Vonovia handlas idag 19,85 EUR och har därmed passerat köptriggern 20 EUR. Tysk bostadsmarknad visar tecken på återhämtning med ECB:s räntesänkningar och förbättrad sentiment för fastighetsbolag. Bolaget har minskat skuldsättningen och genomfört försäljningar av icke-kärninnehav. Analytiker ser 25-30 procent uppåtpotential från nuvarande nivåer med riktpris kring 26 EUR. Stark kassaflödesgenerering och attraktiv direktavkastning på cirka 4,5 procent stödjer investeringscaset. Rekommendation är att allokera 40 000 - 60 000 SEK motsvarande cirka 2000-2500 EUR vid portföljstorlek 1 MSEK.</div>
+      <div class="nhl">ServiceNow +36% sedan köp! +14% på fredagen till $124</div>
+      <div class="nbody">ServiceNow steg +14,38% på fredagen 29 maj till $124,37. Din position 50 aktier: 47 800 SEK → ~64 500 SEK (+16 700 SEK / +35%). 33 analytiker: Köp. Konsensus $141,85.</div>
+    </div>
+    <span class="narr">▼</span>
+  </div>
+</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
+    <div style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+        <span class="nticker">IBM</span><span class="ndate">1 jun 2026</span>
+      </div>
+      <div class="nhl">IBM +7% idag — $10 mdr quantum-investering 2025-2029 bekräftad</div>
+      <div class="nbody">IBM meddelade 10 miljarder USD i quantum computing-investering med målet fault-tolerant quantum-dator 2029. IBM steg +7% till ~320 USD idag. Anderon quantum foundry bekräftad 21 maj.</div>
+    </div>
+    <span class="narr">▼</span>
+  </div>
+</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #3b82f6">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <div style="width:8px;height:8px;border-radius:50%;background:#3b82f6;flex-shrink:0;margin-top:4px"></div>
+    <div style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+        <span class="nticker">SPCX</span><span class="ndate">1 jun 2026</span>
+      </div>
+      <div class="nhl">SpaceX IPO — Roadshow 8 juni, handel sen juni. KÖP EJ noteringsdagen!</div>
+      <div class="nbody">Roadshow 8 juni 2026. Ticker SPCX på Nasdaq. Goldman Sachs lead, 21 banker. 30% retail-allokering. Starlink: 11,4 mdr USD intäkter 2025, 4,4 mdr USD rörelseresultat (+120% YoY).</div>
     </div>
     <span class="narr">▼</span>
   </div>
@@ -217,46 +274,10 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
     <div style="width:8px;height:8px;border-radius:50%;background:#f59e0b;flex-shrink:0;margin-top:4px"></div>
     <div style="flex:1">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">CMPS</span><span class="ndate">Tisdag 2 juni 2026</span>
+        <span class="nticker">VNA</span><span class="ndate">1 jun 2026</span>
       </div>
-      <div class="nhl">COMPASS Pathways COMP006 fas 3-data Q3 2026</div>
-      <div class="nbody">COMPASS Pathways förväntas rapportera topline-resultat från fas 3-studien COMP006 under Q3 2026. Studien utvärderar psilocybinterapi för behandlingsresistent PTSD med över 200 patienter inkluderade. FDA har beviljat breakthrough therapy designation vilket snabbar på regulatorisk process. Fas 2-data visade statistiskt signifikant förbättring i PTSD-symptom med god säkerhetsprofil. Framgångsrikt fas 3-utfall kan leda till FDA-godkännande under 2027 och öppna marknad värd flera miljarder USD årligen. Aktien handlas kring 8-9 USD och kan se volatilitet på 40-80 procent beroende på dataresultat. Bevaka kommunikation från bolaget löpande under sommaren.</div>
-    </div>
-    <span class="narr">▼</span>
-  </div>
-</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
-  <div style="display:flex;gap:8px;align-items:flex-start">
-    <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
-    <div style="flex:1">
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">NOW</span><span class="ndate">Tisdag 2 juni 2026</span>
-      </div>
-      <div class="nhl">ServiceNow fortsätter stark AI-driven tillväxt</div>
-      <div class="nbody">ServiceNow rapporterade stark Q1 2026 med intäktstillväxt över 30 procent årligen driven av AI-produkter och Now Platform. Bolagets AI-agent-funktionalitet för IT-automatisering visar hög adoption hos företagskunder med över 1500 kunder som implementerat AI-lösningar. Prenumerationsintäkter utgör 95 procent av försäljningen vilket ger hög förutsägbarhet. Rörelsemarginal expanderar till över 27 procent och free cash flow-konvertering ligger över 35 procent av intäkter. Aktien handlas kring 875 USD efter uppgång på 18 procent sedan årsskiftet. Analytiker ser fortsatt expansion i TAM mot 275 miljarder USD addresserbar marknad 2027. Stark position inom enterprise workflow-automation säkrar långsiktig tillväxt.</div>
-    </div>
-    <span class="narr">▼</span>
-  </div>
-</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
-  <div style="display:flex;gap:8px;align-items:flex-start">
-    <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
-    <div style="flex:1">
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">ASML</span><span class="ndate">Tisdag 2 juni 2026</span>
-      </div>
-      <div class="nhl">ASML rekordhög orderingång driven av AI-chips</div>
-      <div class="nbody">ASML rapporterar rekordhög orderbok för Q2 2026 med särskilt stark efterfrågan på EUV-system för tillverkning av avancerade AI-chips. Taiwanesiska och sydkoreanska tillverkare ökar kapacitet för 3nm och 2nm-produktion vilket driver ordervärde över 6 miljarder EUR för kvartalet. Bolagets High-NA EUV-system för nästa generations chip-tillverkning visar stark kundintresse med första kommersiella leveranser planerade Q4 2026. ASML bekräftar helårsguidning med intäkter på 32-35 miljarder EUR och bruttomarginal 52-53 procent. Geopolitiska risker kring Kina-export kvarstår men diversifiering till Korea och USA minskar exponering. Aktien värderas som kärninnehav i halvledarekosystemet med teknologiskt monopol på EUV-litografi.</div>
-    </div>
-    <span class="narr">▼</span>
-  </div>
-</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
-  <div style="display:flex;gap:8px;align-items:flex-start">
-    <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
-    <div style="flex:1">
-      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">EQT</span><span class="ndate">Tisdag 2 juni 2026</span>
-      </div>
-      <div class="nhl">EQT stänger rekordstort fond på 25 miljarder EUR</div>
-      <div class="nbody">EQT Partners meddelar att man framgångsrikt stängt sitt tionde flagship private equity-fund på 25 miljarder EUR, det största i bolagets historia. Fonden överträffade målsättningen på 22 miljarder EUR med stark efterfrågan från institutionella investerare globalt. Fondstorlek genererar förvaltningsintäkter motsvarande cirka 500 miljoner EUR årligen över fondlivstiden på 10-12 år. EQT har deployerat över 18 miljarder EUR under senaste 12 månaderna med fokus på nordisk industrisektor och teknologi. Fee-related earnings förväntas öka med 15-20 procent nästa år. Aktien handlas kring 320 SEK med P/E-tal cirka 25 på 2027 estimat. Fortsatt skalfördelar och realisationsvinster stärker långsiktig värdeskapande för aktieägare.</div>
+      <div class="nhl">Vonovia 21,30 EUR — bara 1,30 EUR från vår köptrigger på 20 EUR</div>
+      <div class="nbody">Vonovia handlar 21,30 EUR per 1 juni 2026. 52v lägsta: 20,09 EUR. 10 analytiker Köp, konsensus 32,82 EUR (+54%). Halvårsrapport 5 aug 2026. Sätt kursalarm 20,50 EUR i Swedbank NU!</div>
     </div>
     <span class="narr">▼</span>
   </div>
@@ -265,15 +286,51 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
     <div style="width:8px;height:8px;border-radius:50%;background:#f59e0b;flex-shrink:0;margin-top:4px"></div>
     <div style="flex:1">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">HOLM B</span><span class="ndate">Tisdag 2 juni 2026</span>
+        <span class="nticker">IONQ/RGTI</span><span class="ndate">1 jun 2026</span>
       </div>
-      <div class="nhl">Holmen närmar sig 200-dagars MA vid 360 SEK</div>
-      <div class="nbody">Holmen B-aktien handlas kring 355 SEK och närmar sig 200-dagars glidande medelvärde vid cirka 360 SEK som utgör köptrigger enligt strategi. Skogsindustriaktier visar förbättrad sentiment med stigande pappers- och massapriser efter produktionsnedskärningar globalt. Holmens integrerade affärsmodell med skog, kraftproduktion och förpackning ger diversifiering. Q1-rapport visade EBITDA på 890 MSEK med förbättrad pappersmarginal men svagare byggnadssektorn. Skogsinnehavets värde uppskattas till över 50 miljarder SEK vilket ger substansvärde. Teknisk genombrott över 360 SEK med volym kan signalera trendomslag och öppna väg mot 400 SEK. Förbered köporder vid bekräftat brott över 200-dagars MA med stoppförlust under 340 SEK.</div>
+      <div class="nhl">IonQ -4% och Rigetti -4% idag — profit-taking. Fundamenta intakta</div>
+      <div class="nbody">Kapital koncentreras till IBM. Klassisk vinsthemtagning. Insiders på IonQ, Rigetti och D-Wave nettosålde 931 MUSD under 5 år. Inga nya köp — håll befintliga positioner.</div>
     </div>
     <span class="narr">▼</span>
   </div>
-</div>
-<!--NEWS_END-->
+</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #ef4444">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <div style="width:8px;height:8px;border-radius:50%;background:#ef4444;flex-shrink:0;margin-top:4px"></div>
+    <div style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+        <span class="nticker">HOT</span><span class="ndate">Nu</span>
+      </div>
+      <div class="nhl">Hochtief ~481 EUR — 12% ÖVER konsensus 421 EUR. Avvakta.</div>
+      <div class="nbody">Hochtief tredubblad på 12 månader. Handlar 12% över analytikerkonsensus 421 EUR. Vår köptrigger: 380-400 EUR. Q2-rapport 27 juli 2026.</div>
+    </div>
+    <span class="narr">▼</span>
+  </div>
+</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #f59e0b">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <div style="width:8px;height:8px;border-radius:50%;background:#f59e0b;flex-shrink:0;margin-top:4px"></div>
+    <div style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+        <span class="nticker">CMPS</span><span class="ndate">Q3 2026</span>
+      </div>
+      <div class="nhl">COMPASS: FDA rolling NDA + CNPV — COMP006 fas-3-data Q3 2026 avgörande</div>
+      <div class="nbody">COMP006 fas-3-data väntas Q3 2026. Kassa 466 MUSD täcker till 2028. Binär katalysator.</div>
+    </div>
+    <span class="narr">▼</span>
+  </div>
+</div><div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid #22c55e">
+  <div style="display:flex;gap:8px;align-items:flex-start">
+    <div style="width:8px;height:8px;border-radius:50%;background:#22c55e;flex-shrink:0;margin-top:4px"></div>
+    <div style="flex:1">
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
+        <span class="nticker">ASML</span><span class="ndate">22 maj</span>
+      </div>
+      <div class="nhl">ASML all-time high 1 412 EUR — UBS höjer kursmål till 1 900 EUR</div>
+      <div class="nbody">ASML noterade ATH 1 412,60 EUR den 22 maj 2026. UBS höjer kursmål till 1 900 EUR. Q1: omsättning 8,8 mdr EUR, bruttomarginal 53%.</div>
+    </div>
+    <span class="narr">▼</span>
+  </div>
+
+</div><!--NEWS_END-->
 </div>
 
 <!-- TRIGGERS -->
@@ -382,7 +439,14 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
     </div>
     <div class="badges"><span class="badge b-kop">KÖP</span><span class="badge b-tema">AI & Enterprise</span><span class="badge b-new">🆕 Nyhet</span><span class="badge b-kpt">💰 Köpt</span></div>
   </div>
-  <div class="bar bar-g">🆕 Ny nyhet denna vecka</div><div class="bar bar-g">💰 Investerat: 47 800 SEK</div>
+  <div class="bar bar-g">🆕 Ny nyhet denna vecka</div>
+  <div class="hold-box">
+    <div class="hl">Inköpskurs</div><div class="hv">956 SEK/aktie</div>
+    <div class="hl">Antal</div><div class="hv">50 aktier</div>
+    <div class="hl">Investerat</div><div class="hv">47 800 SEK</div>
+    <div class="hl">Nuvärde</div><div class="hv"><!--NUV_NOW_START-->—<!--NUV_NOW_END--></div>
+    <div class="full"><span class="hl">Avkastning</span><span class="hv"><!--AVK_NOW_START-->—<!--AVK_NOW_END--></span></div>
+  </div>
   <div class="chart-box">
           <div class="chart-hdr">
             <span class="pct-lbl" id="pct_2"></span>
@@ -440,7 +504,13 @@ body{font-family:Arial,sans-serif;background:#f0f2f5;color:#222;font-size:13px}
     </div>
     <div class="badges"><span class="badge b-kop">KÖP</span><span class="badge b-tema">Energi & Elnät</span><span class="badge b-kpt">💰 Köpt</span></div>
   </div>
-  <div class="bar bar-g">💰 Investerat: 22 032 SEK</div>
+  <div class="hold-box">
+    <div class="hl">Inköpskurs</div><div class="hv">220,32 SEK/aktie</div>
+    <div class="hl">Antal</div><div class="hv">100 aktier</div>
+    <div class="hl">Investerat</div><div class="hv">22 032 SEK</div>
+    <div class="hl">Nuvärde</div><div class="hv"><!--NUV_FORTUM_START-->—<!--NUV_FORTUM_END--></div>
+    <div class="full"><span class="hl">Avkastning</span><span class="hv"><!--AVK_FORTUM_START-->—<!--AVK_FORTUM_END--></span></div>
+  </div>
   <div class="chart-box">
           <div class="chart-hdr">
             <span class="pct-lbl" id="pct_4"></span>
