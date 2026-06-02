@@ -1,24 +1,27 @@
 #!/usr/bin/env python3
 """
 Familjen Karlsson - Portföljkontrollrum
-Automatisk morning briefing-uppdaterare.
+Automatisk morning briefing-uppdaterare (robust JSON-version).
 
-Körs av GitHub Actions varje morgon. Anropar Anthropic API EN gång med web search,
-genererar både morning briefing och senaste nyheter i samma svar, och skriver in
-dem i index.html mellan markörerna:
+Körs av GitHub Actions varje morgon. Anropar Anthropic API EN gång med web search.
+AI:n returnerar STRUKTURERAD DATA (JSON) - inte HTML. Scriptet bygger sedan HTML:en
+från fasta mallar, vilket garanterar att div-strukturen ALLTID är korrekt och att
+sidans layout aldrig kan brytas, oavsett vad AI:n svarar.
+
+Skriver in resultatet i index.html mellan markörerna:
   <!--BRIEFING_START--> ... <!--BRIEFING_END-->
   <!--NEWS_START--> ... <!--NEWS_END-->
 
-Ett enda API-anrop = håller sig under rate limit på nya/lägre API-tiers.
-
-Kräver miljövariabel: ANTHROPIC_API_KEY  (sätts som GitHub Secret)
-Använder endast Pythons standardbibliotek.
+Kräver miljövariabel: ANTHROPIC_API_KEY  (GitHub Secret)
+Endast Pythons standardbibliotek - inga pip-beroenden.
 """
 
 import os
+import re
 import sys
 import json
 import time
+import html as html_lib
 import datetime
 import urllib.request
 import urllib.error
@@ -27,7 +30,7 @@ API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 INDEX_FILE = "index.html"
 MODEL = "claude-sonnet-4-5-20250929"
 
-PORTFOLIO_CONTEXT = """Du är portföljövervaknings-AI för Familjen Karlsson. Detta är en 15-20-årig
+PORTFOLIO_CONTEXT = """Du är portföljövervaknings-AI för Familjen Karlsson. En 15-20-årig
 investeringsportfölj på ca 1 MSEK med hög risktolerans.
 
 INNEHAV att bevaka: ServiceNow (NOW, köpt), Fortum (FORTUM, köpt), ASML, Vinci (DG),
@@ -40,9 +43,7 @@ KÖPTRIGGERS (kontrollera om nivå nåtts):
 - Vonovia (VNA): KÖP om < 20 EUR
 - Holmen (HOLM B): KÖP om kurs bryter 200-dagars MA (~360 SEK)
 - COMPASS (CMPS): FDA-nyheter / COMP006 fas-3-data Q3 2026
-- SpaceX (SPCX): IPO-nyheter - köp EJ noteringsdagen
-
-Xetra-köp (E.ON, Hochtief, Vonovia, Siemens Healthineers) sker via Swedbank Mäklare."""
+- SpaceX (SPCX): IPO-nyheter - köp EJ noteringsdagen"""
 
 
 def call_anthropic(prompt, max_tokens=4000, max_retries=5):
@@ -73,84 +74,137 @@ def call_anthropic(prompt, max_tokens=4000, max_retries=5):
             ).strip()
         except urllib.error.HTTPError as e:
             last_err = e
-            # Skriv ut API:ts faktiska felmeddelande (hjälper vid 400)
             try:
-                err_body = e.read().decode("utf-8")
-                print(f"  API-fel {e.code}: {err_body}")
+                print(f"  API-fel {e.code}: {e.read().decode('utf-8')}")
             except Exception:
                 pass
             if e.code in (429, 500, 503, 529):
-                wait = (attempt + 1) * 30  # 30s, 60s, 90s, 120s, 150s
-                print(f"  Väntar {wait}s och försöker igen "
-                      f"(försök {attempt + 1}/{max_retries})...")
+                wait = (attempt + 1) * 30
+                print(f"  Väntar {wait}s och försöker igen ({attempt + 1}/{max_retries})...")
                 time.sleep(wait)
                 continue
             raise
     raise last_err
 
 
-def clean(t):
-    return t.replace("```html", "").replace("```", "").strip()
+def esc(s):
+    """HTML-escape så genererad text aldrig kan bryta strukturen."""
+    return html_lib.escape(str(s), quote=True)
 
 
-def generate_all(date_str):
-    """EN förfrågan som producerar både briefing och nyheter, åtskilda av en markör."""
+def get_data(date_str):
+    """AI returnerar JSON. Scriptet bygger HTML. Strukturen kan aldrig brytas."""
     prompt = f"""{PORTFOLIO_CONTEXT}
 
 Datum: {date_str}.
 
 Sök DAGENS och denna veckas nyheter med web search för innehaven och triggernivåerna ovan.
 
-Producera TVÅ HTML-block åtskilda av exakt raden:
-===NEWS===
+Returnera ENDAST giltig JSON (ingen markdown, ingen text runtom) i EXAKT detta format:
 
-FÖRSTA BLOCKET = morning briefing. GILTIG HTML, exakt denna struktur:
+{{
+  "kopsignaler": [
+    {{"typ": "gron", "rubrik": "Kort rubrik", "text": "Beskrivning med siffror."}}
+  ],
+  "nyheter_brief": [
+    {{"ticker": "NOW", "typ": "positiv", "rubrik": "Kort.", "text": "Beskrivning."}}
+  ],
+  "atgarder": ["Åtgärd 1", "Åtgärd 2", "Åtgärd 3"],
+  "nyheter": [
+    {{"ticker": "NOW", "typ": "positiv", "rubrik": "Rubrik", "text": "Längre brödtext med detaljer och siffror."}}
+  ]
+}}
 
-<div class="brf-sec" style="background:#F0FDF4;border-left:4px solid #1A6B2A">
-  <div class="brf-sh" style="color:#1A6B2A">⚡ Köpsignaler och kritiska varningar</div>
-  <div style="margin-bottom:7px"><b style="color:#1A6B2A">🟢 Rubrik</b><br>Text.</div>
-</div>
-<div class="brf-sec" style="background:#EFF6FF;border-left:4px solid #1F3864">
-  <div class="brf-sh" style="color:#1F3864">📊 Viktiga nyheter</div>
-  <div style="display:flex;flex-direction:column;gap:7px;font-size:11px">
-    <div><span style="background:#DFF0D8;color:#1A6B2A;font-size:9px;font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">TICKER</span><b>Rubrik.</b> Text.</div>
-  </div>
-</div>
-<div class="brf-sec" style="background:#FFFBEB;border-left:4px solid #B8860B">
-  <div class="brf-sh" style="color:#B8860B">✅ Dagens 3 prioriterade åtgärder</div>
-  <div style="font-size:11px;display:flex;flex-direction:column;gap:5px">
-    <div><b>1. ...</b> ...</div><div><b>2. ...</b> ...</div><div><b>3. ...</b> ...</div>
-  </div>
-</div>
-<div style="font-size:9px;color:#888;text-align:center;margin-top:4px">Morning Briefing {date_str} · automatiskt genererad</div>
+Regler:
+- kopsignaler: 2-4 st. "typ" = "gron" (köpsignal), "rod" (varning) eller "bla" (info/IPO).
+- nyheter_brief: 4-6 korta nyheter. "typ" = "positiv", "negativ" eller "neutral".
+- atgarder: exakt 3 konkreta åtgärder för dagen.
+- nyheter: de 6 viktigaste nyheterna med längre text. "typ" = "positiv"/"negativ"/"neutral".
+- Skriv på svenska, var konkret med kurser och siffror.
+- INGEN HTML i texten. Bara ren text. Returnera ENBART JSON-objektet."""
+    raw = call_anthropic(prompt, max_tokens=4000)
+    # Plocka ut JSON-objektet robust
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1:
+        raise RuntimeError("Hittade ingen JSON i svaret")
+    return json.loads(raw[start:end + 1])
 
-Köpsignaler: 2-4 st (🟢/🔴/🚀). Nyheter: 4-6 st; färger #DFF0D8/#1A6B2A positivt,
-#FDECEA/#8B0000 negativt, #FFF3CD/#B8860B neutralt, #DBEAFE/#1D4ED8 info.
 
-Sen raden:
-===NEWS===
+# ── HTML-byggare (fasta mallar - alltid balanserade) ─────────────────────────
+SIG_COLORS = {"gron": "#1A6B2A", "rod": "#8B0000", "bla": "#3b82f6"}
+SIG_EMOJI = {"gron": "🟢", "rod": "🔴", "bla": "🚀"}
+NEWS_BADGE = {
+    "positiv": ("#DFF0D8", "#1A6B2A"),
+    "negativ": ("#FDECEA", "#8B0000"),
+    "neutral": ("#FFF3CD", "#B8860B"),
+}
+NEWS_DOT = {"positiv": "#22c55e", "negativ": "#ef4444", "neutral": "#f59e0b"}
 
-ANDRA BLOCKET = de 6 viktigaste nyheterna, en .nc-div per nyhet, exakt:
 
-<div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid FARG">
+def build_briefing(data, date_str):
+    # Köpsignaler
+    sig_rows = ""
+    for s in data.get("kopsignaler", []):
+        c = SIG_COLORS.get(s.get("typ", "gron"), "#1A6B2A")
+        e = SIG_EMOJI.get(s.get("typ", "gron"), "🟢")
+        sig_rows += (f'<div style="margin-bottom:7px"><b style="color:{c}">{e} '
+                     f'{esc(s.get("rubrik",""))}</b><br>{esc(s.get("text",""))}</div>')
+
+    # Nyheter (korta, i briefing)
+    news_rows = ""
+    for n in data.get("nyheter_brief", []):
+        bg, fg = NEWS_BADGE.get(n.get("typ", "neutral"), NEWS_BADGE["neutral"])
+        news_rows += (f'<div><span style="background:{bg};color:{fg};font-size:9px;'
+                      f'font-weight:bold;padding:1px 6px;border-radius:4px;margin-right:6px">'
+                      f'{esc(n.get("ticker",""))}</span><b>{esc(n.get("rubrik",""))}</b> '
+                      f'{esc(n.get("text",""))}</div>')
+
+    # Åtgärder
+    atg = data.get("atgarder", [])[:3]
+    atg_rows = "".join(
+        f'<div><b>{i+1}.</b> {esc(a)}</div>' for i, a in enumerate(atg)
+    )
+
+    return f'''
+    <div class="brf-sec" style="background:#F0FDF4;border-left:4px solid #1A6B2A">
+      <div class="brf-sh" style="color:#1A6B2A">⚡ Köpsignaler och kritiska varningar</div>
+      {sig_rows}
+    </div>
+    <div class="brf-sec" style="background:#EFF6FF;border-left:4px solid #1F3864">
+      <div class="brf-sh" style="color:#1F3864">📊 Viktiga nyheter</div>
+      <div style="display:flex;flex-direction:column;gap:7px;font-size:11px">
+        {news_rows}
+      </div>
+    </div>
+    <div class="brf-sec" style="background:#FFFBEB;border-left:4px solid #B8860B">
+      <div class="brf-sh" style="color:#B8860B">✅ Dagens 3 prioriterade åtgärder</div>
+      <div style="font-size:11px;display:flex;flex-direction:column;gap:5px">
+        {atg_rows}
+      </div>
+    </div>
+    <div style="font-size:9px;color:#888;text-align:center;margin-top:4px">Morning Briefing {esc(date_str)} · automatiskt genererad</div>'''
+
+
+def build_news(data, date_str):
+    cards = ""
+    for n in data.get("nyheter", []):
+        dot = NEWS_DOT.get(n.get("typ", "neutral"), "#f59e0b")
+        cards += f'''<div class="nc" onclick="this.classList.toggle('open')" style="border-left:3px solid {dot}">
   <div style="display:flex;gap:8px;align-items:flex-start">
-    <div style="width:8px;height:8px;border-radius:50%;background:FARG;flex-shrink:0;margin-top:4px"></div>
+    <div style="width:8px;height:8px;border-radius:50%;background:{dot};flex-shrink:0;margin-top:4px"></div>
     <div style="flex:1">
       <div style="display:flex;gap:6px;align-items:center;margin-bottom:2px">
-        <span class="nticker">TICKER</span><span class="ndate">{date_str}</span>
+        <span class="nticker">{esc(n.get("ticker",""))}</span><span class="ndate">{esc(date_str)}</span>
       </div>
-      <div class="nhl">Rubrik</div>
-      <div class="nbody">Längre brödtext med detaljer och siffror.</div>
+      <div class="nhl">{esc(n.get("rubrik",""))}</div>
+      <div class="nbody">{esc(n.get("text",""))}</div>
     </div>
     <span class="narr">▼</span>
   </div>
-</div>
-
-FARG = #22c55e positivt, #ef4444 negativt, #f59e0b neutralt.
-
-Skriv på svenska, var konkret med siffror. Returnera ENDAST de två blocken och
-skiljeraden ===NEWS=== mellan dem. Ingen annan text."""
-    return clean(call_anthropic(prompt, max_tokens=4000))
+</div>'''
+    return cards
 
 
 def replace_between(html, start_marker, end_marker, new_inner):
@@ -171,31 +225,32 @@ def main():
     months = ["januari", "februari", "mars", "april", "maj", "juni", "juli",
               "augusti", "september", "oktober", "november", "december"]
     date_str = f"{weekdays[today.weekday()].capitalize()} {today.day} {months[today.month-1]} {today.year}"
-    print(f"Genererar briefing + nyheter för: {date_str}")
+    print(f"Genererar för: {date_str}")
 
     with open(INDEX_FILE, "r", encoding="utf-8") as f:
         html = f.read()
 
-    print("Hämtar briefing + nyheter i ett anrop (web search)...")
-    result = generate_all(date_str)
+    print("Hämtar data från API (web search)...")
+    data = get_data(date_str)
+    print(f"  Köpsignaler: {len(data.get('kopsignaler', []))}, "
+          f"Nyheter-brief: {len(data.get('nyheter_brief', []))}, "
+          f"Åtgärder: {len(data.get('atgarder', []))}, "
+          f"Nyheter: {len(data.get('nyheter', []))}")
 
-    if "===NEWS===" in result:
-        briefing_html, news_html = result.split("===NEWS===", 1)
-    else:
-        # Fallback: allt blir briefing, nyheter lämnas orörda
-        briefing_html, news_html = result, None
-        print("  VARNING: hittade ingen ===NEWS===-skiljare, uppdaterar bara briefing.")
+    briefing_html = build_briefing(data, date_str)
+    news_html = build_news(data, date_str)
 
-    briefing_html = clean(briefing_html)
+    # Säkerhetskontroll: div-balans innan vi skriver
+    for label, frag in [("briefing", briefing_html), ("nyheter", news_html)]:
+        o, c = frag.count("<div"), frag.count("</div>")
+        if o != c:
+            print(f"VARNING: {label} obalanserad ({o}/{c}) - hoppar över skrivning",
+                  file=sys.stderr)
+            sys.exit(1)
+
     html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", briefing_html)
-    print(f"  Briefing: {len(briefing_html)} tecken")
+    html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", news_html)
 
-    if news_html is not None:
-        news_html = clean(news_html)
-        html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", news_html)
-        print(f"  Nyheter: {len(news_html)} tecken")
-
-    import re
     html = re.sub(r'🌅 Morning Briefing — [^<]*',
                   f'🌅 Morning Briefing — {date_str}', html, count=1)
     html = re.sub(r'<div class="news-hdr-s">[^<]*</div>',
@@ -203,7 +258,7 @@ def main():
 
     with open(INDEX_FILE, "w", encoding="utf-8") as f:
         f.write(html)
-    print("index.html uppdaterad.")
+    print("index.html uppdaterad - layout garanterat intakt.")
 
 
 if __name__ == "__main__":
