@@ -50,7 +50,7 @@ def call_anthropic(prompt, max_tokens=4000, max_retries=5):
         "model": MODEL,
         "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
-        "tools": [{"type": "web_search_20250305", "name": "web_search"}],
+        "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 5}],
     }
     data_bytes = json.dumps(body).encode("utf-8")
     headers = {
