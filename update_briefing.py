@@ -43,6 +43,7 @@ MODEL = "claude-sonnet-4-5-20250929"
 HOLDINGS = [
     {"namn": "ServiceNow", "antal": 50,  "inkop_sek": 47800, "stooq": ["now.us"],                          "valuta": "USD", "kort": "NOW"},
     {"namn": "Fortum Oyj", "antal": 100, "inkop_sek": 22032, "stooq": ["fum1v.fi", "fortum.fi", "fortum.he"], "valuta": "EUR", "kort": "FORTUM", "ai_fallback": True},
+    {"namn": "Compass Pathways", "antal": 250, "inkop_sek": 30341, "stooq": ["cmps.us"], "valuta": "USD", "kort": "CMPS"},
 ]
 
 
@@ -218,7 +219,19 @@ NEWS_BADGE = {"positiv": ("#DFF0D8", "#1A6B2A"), "negativ": ("#FDECEA", "#8B0000
 NEWS_DOT = {"positiv": "#22c55e", "negativ": "#ef4444", "neutral": "#f59e0b"}
 
 
-def build_briefing(data, date_str):
+def build_briefing(data, date_str, ibm=None):
+    # IBM daglig bevakning högst upp (siffror från Stooq, kommentar från AI)
+    ibm_html = ""
+    if ibm:
+        kom = esc(data.get("ibm_kommentar", ""))
+        ibm_html = (f'<div class="brf-sec" style="background:#F5F3FF;border-left:4px solid #6D28D9">'
+                    f'<div class="brf-sh" style="color:#6D28D9">📈 IBM daglig bevakning · din order 275 USD</div>'
+                    f'<div style="font-size:12px;margin-bottom:4px"><b style="color:{ibm["color"]}">{ibm["emoji"]} '
+                    f'{esc(ibm["text"])}</b></div>'
+                    f'<div style="font-size:11px;color:#444">Senaste: <b>{ibm["last"]:.2f} USD</b> '
+                    f'({ibm["change"]:+.1f}% senaste dagen) · {ibm["dist"]:.1f}% över din köporder</div>'
+                    + (f'<div style="font-size:11px;color:#666;margin-top:3px">{kom}</div>' if kom else "")
+                    + '</div>')
     sig = ""
     for s in data.get("kopsignaler", []):
         c = SIG_COLORS.get(s.get("typ", "gron"), "#1A6B2A")
@@ -233,7 +246,7 @@ def build_briefing(data, date_str):
                f'<b>{esc(n.get("rubrik",""))}</b> {esc(n.get("text",""))}</div>')
     atg = "".join(f'<div><b>{i+1}.</b> {esc(a)}</div>'
                   for i, a in enumerate(data.get("atgarder", [])[:3]))
-    return f'''
+    return ibm_html + f'''
     <div class="brf-sec" style="background:#F0FDF4;border-left:4px solid #1A6B2A">
       <div class="brf-sh" style="color:#1A6B2A">⚡ Köpsignaler och kritiska varningar</div>
       {sig}
@@ -377,6 +390,47 @@ def build_chart_data():
     return pd, ok, fail
 
 
+# ── IBM DAGLIG BEVAKNING (köp/sälj-läsning mot öppen order) ──────────────────
+IBM_WATCH = {
+    "stooq": "ibm.us",
+    "order_kurs": 275.0,     # användarens öppna limit-köporder (USD)
+    "order_antal": 20,
+    "order_utgang": "slutet av juni",
+}
+
+
+def ibm_daily_read():
+    """Räknar köp/sälj-läget för IBM från RIKTIG Stooq-data. AI rör inte siffrorna.
+    Returnerar dict eller None."""
+    closes = fetch_daily_closes(IBM_WATCH["stooq"])
+    if not closes or len(closes) < 2:
+        return None
+    last = closes[-1]
+    prev = closes[-2]
+    change = (last - prev) / prev * 100 if prev else 0.0
+    order = IBM_WATCH["order_kurs"]
+    dist = (last - order) / order * 100   # % över ordern
+    # Stance-regler (räknas i scriptet, inte av AI)
+    if last <= order:
+        stance = ("🟢", "#1A6B2A",
+                  f"Kursen ({last:.2f}) är PÅ eller UNDER din order 275 — den kan fyllas. Kolla Swedbank.")
+    elif dist <= 3:
+        stance = ("🟡", "#B8860B",
+                  f"Bara {dist:.1f}% över din order 275 — närmar sig, kan fyllas snart.")
+    elif change >= 2:
+        stance = ("🔵", "#1D4ED8",
+                  f"Rör sig uppåt (+{change:.1f}% senaste dagen), {dist:.1f}% över 275. "
+                  f"Överväg om du vill höja köpkursen för att inte missa.")
+    elif change <= -2:
+        stance = ("🟢", "#1A6B2A",
+                  f"Faller ({change:.1f}% senaste dagen) mot din order — {dist:.1f}% kvar till 275. Håll utkik.")
+    else:
+        stance = ("⚪", "#555",
+                  f"Stabil ({change:+.1f}% senaste dagen), {dist:.1f}% över din order 275. Avvakta.")
+    return {"last": last, "change": change, "dist": dist,
+            "emoji": stance[0], "color": stance[1], "text": stance[2]}
+
+
 def main():
     if not API_KEY:
         print("FEL: ANTHROPIC_API_KEY saknas", file=sys.stderr)
@@ -426,7 +480,13 @@ def main():
     # 2) BRIEFING + NYHETER
     print("Hämtar briefing + nyheter (web search)...")
     data = get_data(date_str)
-    briefing_html = build_briefing(data, date_str)
+    print("Hämtar IBM-bevakning från Stooq...")
+    ibm = ibm_daily_read()
+    if ibm:
+        print(f"  IBM: {ibm['last']:.2f} USD ({ibm['change']:+.1f}%), {ibm['dist']:.1f}% över order 275")
+    else:
+        print("  IBM: kunde inte hämta kurs - hoppar över IBM-sektionen")
+    briefing_html = build_briefing(data, date_str, ibm)
     news_html = build_news(data, date_str)
     for label, frag in [("briefing", briefing_html), ("nyheter", news_html)]:
         if frag.count("<div") != frag.count("</div>"):
