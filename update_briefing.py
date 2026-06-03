@@ -320,7 +320,7 @@ CHART_SYMBOLS = {
     "TEM": ["tem.us"], "CMPS": ["cmps.us"], "IBM": ["ibm.us"], "IONQ": ["ionq.us"],
     "QBTS": ["qbts.us"], "RGTI": ["rgti.us"], "QS": ["qs.us"], "AMPX": ["ampx.us"],
     "SLDP": ["sldp.us"], "MOGA": ["mog_a.us", "moga.us"], "TDG": ["tdg.us"],
-    "ASTS": ["asts.us"], "STERV": ["sterv.fi"], "HOLMB": ["holm_b.se"],
+    "STERV": ["sterv.fi"], "HOLMB": ["holm_b.se"],
     "KYCCF": ["kyccf.us", "6861.jp"],
 }
 
@@ -477,23 +477,31 @@ def main():
     else:
         print("  Vissa innehav saknar kurs - fyllde de kort som gick, lämnar headertotalen orörd.")
 
-    # 2) BRIEFING + NYHETER
+    # 2) BRIEFING + NYHETER  (KRASCHSÄKER: ett API-fel får ALDRIG avbryta körningen
+    #    - då skulle commit/push aldrig ske och sidan frysa. Vi behåller i värsta fall
+    #    gårdagens briefing men fortsätter alltid till kurvor/datum/skrivning/commit.)
     print("Hämtar briefing + nyheter (web search)...")
-    data = get_data(date_str)
-    print("Hämtar IBM-bevakning från Stooq...")
-    ibm = ibm_daily_read()
-    if ibm:
-        print(f"  IBM: {ibm['last']:.2f} USD ({ibm['change']:+.1f}%), {ibm['dist']:.1f}% över order 275")
-    else:
-        print("  IBM: kunde inte hämta kurs - hoppar över IBM-sektionen")
-    briefing_html = build_briefing(data, date_str, ibm)
-    news_html = build_news(data, date_str)
-    for label, frag in [("briefing", briefing_html), ("nyheter", news_html)]:
-        if frag.count("<div") != frag.count("</div>"):
-            print(f"VARNING: {label} obalanserad - avbryter", file=sys.stderr)
-            sys.exit(1)
-    html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", "\n" + briefing_html + "\n")
-    html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", "\n" + news_html + "\n")
+    try:
+        data = get_data(date_str)
+        print("Hämtar IBM-bevakning från Stooq...")
+        ibm = ibm_daily_read()
+        if ibm:
+            print(f"  IBM: {ibm['last']:.2f} USD ({ibm['change']:+.1f}%), {ibm['dist']:.1f}% över order 275")
+        else:
+            print("  IBM: kunde inte hämta kurs - hoppar över IBM-sektionen")
+        briefing_html = build_briefing(data, date_str, ibm)
+        news_html = build_news(data, date_str)
+        ok_frag = True
+        for label, frag in [("briefing", briefing_html), ("nyheter", news_html)]:
+            if frag.count("<div") != frag.count("</div>"):
+                print(f"  VARNING: {label} obalanserad - hoppar över (behåller gårdagens)", file=sys.stderr)
+                ok_frag = False
+        if ok_frag:
+            html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", "\n" + briefing_html + "\n")
+            html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", "\n" + news_html + "\n")
+            print("  Briefing + nyheter uppdaterade.")
+    except Exception as e:
+        print(f"  VARNING: briefing/nyheter misslyckades ({e!r}) - behåller gårdagens, fortsätter ändå.", file=sys.stderr)
 
     # 2b) KURSKURVOR - hämta riktig historik och ersätt PD-objektet
     print("Hämtar kurskurvor från Stooq...")
