@@ -295,6 +295,88 @@ def fmt_sek(n):
     return f"{n:,.0f}".replace(",", " ") + " SEK"
 
 
+# ── KURSKURVOR: hämta riktig daglig historik från Stooq ──────────────────────
+# Ticker i korten -> kandidat-Stooq-symboler. USA (.us) funkar; vissa europeiska
+# kan saknas (markeras då som "data saknas" istället för att visa påhittat).
+CHART_SYMBOLS = {
+    "ASML": ["asml.us"], "ARKK": ["arkk.us"], "NOW": ["now.us"],
+    "EOAN": ["eoan.de"], "FORTUM": ["fum1v.fi", "fortum.fi"], "DG": ["dg.fr"],
+    "SKAB": ["ska_b.se", "skab.se"], "HOT": ["hot.de"], "PEABB": ["peab_b.se"],
+    "VNA": ["vna.de"], "SWEDA": ["swed_a.se", "sweda.se"], "EQT": ["eqt.se"],
+    "INVEB": ["inve_b.se"], "SHL": ["shl.de"], "MDT": ["mdt.us"], "ISRG": ["isrg.us"],
+    "TEM": ["tem.us"], "CMPS": ["cmps.us"], "IBM": ["ibm.us"], "IONQ": ["ionq.us"],
+    "QBTS": ["qbts.us"], "RGTI": ["rgti.us"], "QS": ["qs.us"], "AMPX": ["ampx.us"],
+    "SLDP": ["sldp.us"], "MOGA": ["mog_a.us", "moga.us"], "TDG": ["tdg.us"],
+    "ASTS": ["asts.us"], "STERV": ["sterv.fi"], "HOLMB": ["holm_b.se"],
+    "KYCCF": ["kyccf.us", "6861.jp"],
+}
+
+
+def fetch_daily_closes(symbol):
+    """Daglig stängningshistorik från Stooq, äldst->nyast. None om saknas."""
+    url = f"https://stooq.com/q/d/l/?s={symbol}&i=d"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=40) as r:
+            text = r.read().decode("utf-8", "replace")
+    except Exception:
+        return None
+    rows = list(csv.DictReader(io.StringIO(text)))
+    closes = []
+    for row in rows:
+        c = row.get("Close", "")
+        if c not in (None, "", "N/D", "N/A"):
+            try:
+                closes.append(float(c))
+            except ValueError:
+                pass
+    return closes if len(closes) >= 8 else None
+
+
+def _sample_even(seq, n):
+    if not seq:
+        return []
+    if len(seq) <= n:
+        return seq[:]
+    step = (len(seq) - 1) / (n - 1)
+    return [seq[round(i * step)] for i in range(n)]
+
+
+def build_periods(closes):
+    """Bygger periodskivorna 1w/3m/12m/3y/5y ur dagliga closes."""
+    def window(days, n):
+        w = closes[-days:] if len(closes) >= days else closes[:]
+        return [round(x, 2) for x in _sample_even(w, n)]
+    return {
+        "1w":  [round(x, 2) for x in closes[-7:]],
+        "3m":  window(65, 13),
+        "12m": window(252, 12),
+        "3y":  window(756, 12),
+        "5y":  window(1260, 20),
+    }
+
+
+def build_chart_data():
+    """Hämtar riktig historik för alla tickers. Returnerar (pd_dict, ok_lista, fail_lista)."""
+    pd = {}
+    ok, fail = [], []
+    for ticker, syms in CHART_SYMBOLS.items():
+        closes = None
+        for sym in syms:
+            closes = fetch_daily_closes(sym)
+            if closes:
+                break
+        if closes:
+            pd[ticker] = build_periods(closes)
+            ok.append(ticker)
+            print(f"  Kurva {ticker}: {len(closes)} dagar -> riktig data")
+        else:
+            pd[ticker] = {"1w": [], "3m": [], "12m": [], "3y": [], "5y": []}
+            fail.append(ticker)
+            print(f"  Kurva {ticker}: SAKNAS (provade {syms})")
+    return pd, ok, fail
+
+
 def main():
     if not API_KEY:
         print("FEL: ANTHROPIC_API_KEY saknas", file=sys.stderr)
@@ -352,6 +434,21 @@ def main():
             sys.exit(1)
     html = replace_between(html, "<!--BRIEFING_START-->", "<!--BRIEFING_END-->", "\n" + briefing_html + "\n")
     html = replace_between(html, "<!--NEWS_START-->", "<!--NEWS_END-->", "\n" + news_html + "\n")
+
+    # 2b) KURSKURVOR - hämta riktig historik och ersätt PD-objektet
+    print("Hämtar kurskurvor från Stooq...")
+    pd_data, ok_list, fail_list = build_chart_data()
+    pd_json = json.dumps(pd_data, ensure_ascii=False)
+    new_html, n = re.subn(r'const PD = \{.*?\}\};(\s*const PL)',
+                          'const PD = ' + pd_json.replace('\\', '\\\\') + r';\1',
+                          html, count=1, flags=re.DOTALL)
+    if n == 1:
+        html = new_html
+        print(f"  Kurvor uppdaterade: {len(ok_list)} riktiga, {len(fail_list)} saknar data")
+        if fail_list:
+            print(f"  Saknar kursdata: {', '.join(fail_list)}")
+    else:
+        print("  VARNING: hittade inte PD-objektet - kurvor oförändrade")
 
     # 3) Datumstämplar
     html = re.sub(r'🌅 Morning Briefing — [^<]*', f'🌅 Morning Briefing — {date_str}', html, count=1)
