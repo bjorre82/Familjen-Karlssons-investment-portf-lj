@@ -42,7 +42,7 @@ MODEL = "claude-sonnet-4-5-20250929"
 # antal: antal aktier. inkop: totalt inköpsvärde i SEK.
 HOLDINGS = [
     {"namn": "ServiceNow", "antal": 50,  "inkop_sek": 47800, "stooq": ["now.us"],                          "valuta": "USD", "kort": "NOW"},
-    {"namn": "Fortum",     "antal": 100, "inkop_sek": 22032, "stooq": ["fum1v.fi", "fortum.fi", "fortum.he"], "valuta": "EUR", "kort": "FORTUM"},
+    {"namn": "Fortum Oyj", "antal": 100, "inkop_sek": 22032, "stooq": ["fum1v.fi", "fortum.fi", "fortum.he"], "valuta": "EUR", "kort": "FORTUM", "ai_fallback": True},
 ]
 
 
@@ -75,6 +75,23 @@ def stooq_last_any(symbols):
     return None, None
 
 
+def ai_price_eur(namn):
+    """Reserv: frågar AI:n om aktiens aktuella kurs (EUR) via web search. Ungefärlig.
+    Returnerar float eller None."""
+    try:
+        prompt = (f"Vad är den senaste aktiekursen för {namn} på Helsingforsbörsen just nu, "
+                  f"i EUR? Sök med web search. Svara med ENBART ett tal (t.ex. 20.45), "
+                  f"inget annat - ingen text, ingen valutasymbol.")
+        raw = call_anthropic(prompt, max_tokens=300)
+        # Plocka ut första talet ur svaret
+        m = re.search(r'\d+[.,]?\d*', raw.replace(",", "."))
+        if m:
+            return float(m.group(0))
+    except Exception as e:
+        print(f"  AI-reserv misslyckades för {namn}: {e}")
+    return None
+
+
 def fx_to_sek(cur):
     """Växelkurs cur->SEK via Stooq. SEK=1.0."""
     if cur == "SEK":
@@ -96,6 +113,12 @@ def compute_portfolio():
         inkop_total += h["inkop_sek"]
         symbols = h["stooq"] if isinstance(h["stooq"], list) else [h["stooq"]]
         price, used = stooq_last_any(symbols)
+        approx = False
+        # Reserv: om Stooq inte hittar aktien och AI-reserv är påslagen, fråga AI:n
+        if price is None and h.get("ai_fallback"):
+            price = ai_price_eur(h["namn"])
+            used = "AI-reserv (ungefärlig)"
+            approx = True
         rate = fx_to_sek(h["valuta"])
         if price is None or rate is None:
             print(f"  Saknar kurs/FX för {h['namn']} (provade {symbols}, {h['valuta']})")
@@ -104,7 +127,7 @@ def compute_portfolio():
         värde = h["antal"] * price * rate
         total_sek += värde
         h_avk = (värde - h["inkop_sek"]) / h["inkop_sek"] * 100 if h["inkop_sek"] else 0.0
-        per_holding[h["kort"]] = {"nuv": värde, "avk": h_avk}
+        per_holding[h["kort"]] = {"nuv": värde, "avk": h_avk, "approx": approx}
         print(f"  {h['namn']} [{used}]: {h['antal']} x {price} {h['valuta']} x {rate} = {värde:.0f} SEK ({h_avk:+.1f}%)")
     # Returnera ALLTID per_holding (så kort som funkar fylls), plus om allt löste sig
     avk = (total_sek - inkop_total) / inkop_total * 100 if inkop_total else 0.0
@@ -295,7 +318,8 @@ def main():
     for kort, v in per_holding.items():
         hup = v["avk"] >= 0
         cls = "pos" if hup else "neg"
-        nuv_html = f'{fmt_sek(v["nuv"])}'
+        approx_tag = ' <span style="font-size:8px;color:#B8860B" title="Ungefärlig - AI-uppskattning, ej börskälla">~ungef.</span>' if v.get("approx") else ''
+        nuv_html = f'{fmt_sek(v["nuv"])}{approx_tag}'
         avk_html = f'<span class="hv {cls}">{"▲ +" if hup else "▼ "}{v["avk"]:.1f}%</span>'
         try:
             html = replace_between(html, f"<!--NUV_{kort}_START-->", f"<!--NUV_{kort}_END-->", nuv_html)
@@ -307,11 +331,13 @@ def main():
         total_sek, avk = pf["total_sek"], pf["avk"]
         up = avk >= 0
         col = "#4ade80" if up else "#f87171"
-        val_html = f'<span style="color:#fff">{fmt_sek(total_sek)}</span>'
+        any_approx = any(v.get("approx") for v in per_holding.values())
+        approx_tag = ' <span style="font-size:8px;color:#fde68a" title="Innehåller AI-uppskattad kurs">~</span>' if any_approx else ''
+        val_html = f'<span style="color:#fff">{fmt_sek(total_sek)}{approx_tag}</span>'
         ret_html = f'<span style="color:{col}">{"▲ +" if up else "▼ "}{avk:.2f}%</span>'
         html = replace_between(html, "<!--PORTF_VALUE_START-->", "<!--PORTF_VALUE_END-->", val_html)
         html = replace_between(html, "<!--PORTF_RETURN_START-->", "<!--PORTF_RETURN_END-->", ret_html)
-        print(f"  Portföljvärde: {fmt_sek(total_sek)} ({avk:+.2f}%)")
+        print(f"  Portföljvärde: {fmt_sek(total_sek)} ({avk:+.2f}%){' [innehåller AI-uppskattning]' if any_approx else ''}")
     else:
         print("  Vissa innehav saknar kurs - fyllde de kort som gick, lämnar headertotalen orörd.")
 
