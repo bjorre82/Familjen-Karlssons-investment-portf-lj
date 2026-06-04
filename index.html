@@ -2167,7 +2167,7 @@ window.addEventListener('load',function(){
   var keys={"0": "ASML", "1": "ARKK", "2": "NOW", "3": "EOAN", "4": "FORTUM", "5": "DG", "6": "SKAB", "7": "HOT", "8": "PEABB", "9": "VNA", "10": "SWEDA", "11": "EQT", "12": "INVEB", "13": "SHL", "14": "MDT", "15": "ISRG", "16": "TEM", "17": "CMPS", "18": "IBM", "19": "IONQ", "20": "QBTS", "21": "RGTI", "22": "QS", "23": "AMPX", "24": "SLDP", "25": null, "26": "MOGA", "27": "TDG", "28": null, "30": "STERV", "31": "HOLMB", "32": "KYCCF", "33": null};
   Object.keys(keys).forEach(function(idx){
     var key=keys[idx];
-    if(key) drawChart(parseInt(idx),key);
+    if(key) thumbChart(parseInt(idx), SYM[key]);
   });
 });
 
@@ -2191,6 +2191,31 @@ function loadTVChart(sym){
   s.innerHTML=JSON.stringify({symbols:[[sym]],chartOnly:true,width:'100%',height:'100%',locale:'se',colorTheme:'light',autosize:true,showVolume:false,isTransparent:true,gridLineColor:'rgba(0,0,0,0.06)',lineWidth:2,dateRanges:['1w|15','1m|30','3m|60','12m|1D','60m|1W','all|1M']});
   c.appendChild(s);
   box.appendChild(c);
+}
+function thumbChart(idx, sym){
+  var canvas=document.getElementById('c'+idx);
+  if(!canvas) return;
+  var box=canvas.parentElement;
+  var card=canvas.closest('.card');
+  if(card){ var pb=card.querySelector('.pb-wrap'); if(pb)pb.style.display='none'; var pl=card.querySelector('.pct-lbl'); if(pl)pl.style.display='none'; }
+  if(!sym){ box.style.display='none'; return; }
+  box.style.height='160px';
+  var done=false;
+  function load(){
+    if(done) return; done=true;
+    box.innerHTML='';
+    var c=document.createElement('div'); c.className='tradingview-widget-container'; c.style.height='100%'; c.style.width='100%';
+    var w=document.createElement('div'); w.className='tradingview-widget-container__widget'; w.style.height='100%'; w.style.width='100%';
+    c.appendChild(w);
+    var s=document.createElement('script'); s.async=true;
+    s.src='https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
+    s.innerHTML=JSON.stringify({symbol:sym,width:'100%',height:'100%',locale:'se',dateRange:'12M',colorTheme:'light',isTransparent:true,autosize:true});
+    c.appendChild(s); box.appendChild(c);
+  }
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){ es.forEach(function(e){ if(e.isIntersecting){ load(); io.disconnect(); } }); }, {rootMargin:'300px'});
+    io.observe(box);
+  } else { load(); }
 }
 function showStrat(key){
   var s=ST[key]; if(!s) return;
